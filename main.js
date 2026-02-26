@@ -239,8 +239,6 @@ const enemyNextPos = new THREE.Vector3();
 let enemyPath = [];
 let enemyPathIndex = 0;
 let enemyPathLastReplan = 0;
-let enemyPathStartKey = "";
-let enemyPathGoalKey = "";
 let enemyHealth = ENEMY_MAX_HEALTH;
 let enemyDisplayedHealth = ENEMY_MAX_HEALTH;
 let enemyLagHealth = ENEMY_MAX_HEALTH;
@@ -407,7 +405,15 @@ function computeEnemyGridPath(startWorld, goalWorld) {
     const toIdx = (v, min, size) =>
         THREE.MathUtils.clamp(Math.round((v - min) / ENEMY_GRID_SIZE), 0, size - 1);
     const toWorld = (i, min) => min + i * ENEMY_GRID_SIZE;
-    const nodeKey = (ix, iy, iz) => `${ix}|${iy}|${iz}`;
+    const yzStride = sizeY * sizeZ;
+    const toKey = (ix, iy, iz) => ix * yzStride + iy * sizeZ + iz;
+    const fromKey = (key) => {
+        const ix = Math.floor(key / yzStride);
+        const rem = key - ix * yzStride;
+        const iy = Math.floor(rem / sizeZ);
+        const iz = rem - iy * sizeZ;
+        return [ix, iy, iz];
+    };
     const heuristic = (ax, ay, az, bx, by, bz) =>
         Math.abs(ax - bx) + Math.abs(ay - by) + Math.abs(az - bz);
 
@@ -447,17 +453,19 @@ function computeEnemyGridPath(startWorld, goalWorld) {
     [sx, sy, sz] = startFixed;
     [gx, gy, gz] = goalFixed;
 
-    const openSet = new Set([nodeKey(sx, sy, sz)]);
+    const startKey = toKey(sx, sy, sz);
+    const goalKey = toKey(gx, gy, gz);
+    const openSet = new Set([startKey]);
     const cameFrom = new Map();
-    const gScore = new Map([[nodeKey(sx, sy, sz), 0]]);
-    const fScore = new Map([[nodeKey(sx, sy, sz), heuristic(sx, sy, sz, gx, gy, gz)]]);
+    const gScore = new Map([[startKey, 0]]);
+    const fScore = new Map([[startKey, heuristic(sx, sy, sz, gx, gy, gz)]]);
     const dirs = [
         [1, 0, 0], [-1, 0, 0], [0, 1, 0],
         [0, -1, 0], [0, 0, 1], [0, 0, -1],
     ];
 
     while (openSet.size > 0) {
-        let currentKey = "";
+        let currentKey = -1;
         let currentF = Infinity;
         for (const key of openSet) {
             const fs = fScore.get(key) ?? Infinity;
@@ -466,13 +474,13 @@ function computeEnemyGridPath(startWorld, goalWorld) {
                 currentKey = key;
             }
         }
-        if (!currentKey) break;
-        const [cx, cy, cz] = currentKey.split("|").map(Number);
-        if (cx === gx && cy === gy && cz === gz) {
+        if (currentKey < 0) break;
+        const [cx, cy, cz] = fromKey(currentKey);
+        if (currentKey === goalKey) {
             const out = [];
             let k = currentKey;
-            while (k) {
-                const [ix, iy, iz] = k.split("|").map(Number);
+            while (k !== undefined) {
+                const [ix, iy, iz] = fromKey(k);
                 out.push(new THREE.Vector3(toWorld(ix, minX), toWorld(iy, minY), toWorld(iz, minZ)));
                 k = cameFrom.get(k);
             }
@@ -490,7 +498,7 @@ function computeEnemyGridPath(startWorld, goalWorld) {
             const wy = toWorld(ny, minY);
             const wz = toWorld(nz, minZ);
             if (isEnemyGridCellBlocked(wx, wy, wz)) continue;
-            const nk = nodeKey(nx, ny, nz);
+            const nk = toKey(nx, ny, nz);
             const tentative = (gScore.get(currentKey) ?? Infinity) + 1;
             if (tentative < (gScore.get(nk) ?? Infinity)) {
                 cameFrom.set(nk, currentKey);
@@ -886,7 +894,7 @@ function spawnExtraEnemy() {
         target: new THREE.Vector3(),
         path: [],
         pathIndex: 0,
-        pathLastReplan: 0,
+        pathLastReplan: clock.elapsedTime + Math.random() * ENEMY_PATH_REPLAN_INTERVAL,
         health: ENEMY_MAX_HEALTH,
         displayedHealth: ENEMY_MAX_HEALTH,
         lagHealth: ENEMY_MAX_HEALTH,
@@ -1115,12 +1123,19 @@ portalMaskMaterial.side = THREE.DoubleSide;
 
 const PORTAL_WIDTH = 2.8;
 const PORTAL_HEIGHT = 4.0;
-const PORTAL_RT_MIN = 256;
-const PORTAL_RT_MAX = renderer.capabilities.maxTextureSize;
-const PORTAL_RT_SCALE = 32768;
+const PORTAL_RT_MIN = 128;
+const PORTAL_RT_MAX_LOW_SPEC = 1024;
+const PORTAL_RT_MAX = Math.min(renderer.capabilities.maxTextureSize, PORTAL_RT_MAX_LOW_SPEC);
+const PORTAL_RT_SCALE = 8192;
 const PORTAL_RT_DISTANCE_BIAS = 0.01;
-const PORTAL_RT_SUPERSAMPLE = Math.max(1, window.devicePixelRatio);
-const PORTAL_RT_QUALITY_BOOST = 4.0;
+const PORTAL_RT_SUPERSAMPLE = 1;
+const PORTAL_RT_QUALITY_BOOST = 1.6;
+const PORTAL_PREPASS_UPDATE_INTERVAL_FRAMES = 2;
+const PORTAL_PREPASS_NEAR_DISTANCE = 18;
+const MINIMAP_UPDATE_INTERVAL = 1 / 15;
+const PARTICLE_LOOKAT_INTERVAL_FRAMES = 3;
+let frameCounter = 0;
+let minimapUpdateTimer = 0;
 
 function createPortalFrame(color = 0x66ccff) {
     const group = new THREE.Group();
@@ -1395,9 +1410,7 @@ function resetMainEnemyForNewGame() {
     enemyVelocity.set(0, 0, 0);
     enemyPath = [];
     enemyPathIndex = 0;
-    enemyPathLastReplan = 0;
-    enemyPathStartKey = "";
-    enemyPathGoalKey = "";
+    enemyPathLastReplan = clock.elapsedTime + Math.random() * ENEMY_PATH_REPLAN_INTERVAL;
     orbEntity.position.set(-9.0, ENEMY_BASE_Y, 0);
     orbCore.visible = true;
     orbCore.material.opacity = 1;
@@ -2085,6 +2098,24 @@ const invSourcePortal = new THREE.Matrix4();
 const oneScale = new THREE.Vector3(1, 1, 1);
 const destNormalWorld = new THREE.Vector3();
 const sideToPlayer = new THREE.Vector3();
+const portalViewDir = new THREE.Vector3();
+const portalToPortal = new THREE.Vector3();
+
+function isPortalRenderableFromViewer(portal, viewerPosition = playerYaw.position, viewerForward = null) {
+    portal.mesh.getWorldPosition(tmpWorldPos);
+    tmpNormal.set(0, 0, 1).applyQuaternion(portal.mesh.getWorldQuaternion(tmpQuat)).normalize();
+    sideToPlayer.copy(viewerPosition).sub(tmpWorldPos);
+    const facingPortalFront = tmpNormal.dot(sideToPlayer) >= 0;
+    if (!facingPortalFront) return false;
+    if (viewerForward) {
+        portalToPortal.copy(tmpWorldPos).sub(viewerPosition);
+        if (portalToPortal.lengthSq() > 1e-8) {
+            portalToPortal.normalize();
+            if (viewerForward.dot(portalToPortal) < -0.35) return false;
+        }
+    }
+    return true;
+}
 
 function updatePortalSideVisibility(portal, viewerPosition = playerYaw.position) {
     portal.mesh.getWorldPosition(tmpWorldPos);
@@ -2166,14 +2197,20 @@ function updatePortalTextures() {
         portal.backSurface.visible = false;
     }
 
+    camera.getWorldDirection(portalViewDir).normalize();
+    const activePortals = [];
+    const portalDistances = new Map();
     const finalRtSizes = new Map();
     for (const portal of world.portals) {
+        if (!isPortalRenderableFromViewer(portal, playerYaw.position, portalViewDir)) continue;
+        activePortals.push(portal);
         // Scale quality by perpendicular distance to the portal plane.
         portal.mesh.getWorldPosition(tmpWorldPos);
         tmpNormal.set(0, 0, 1).applyQuaternion(portal.mesh.getWorldQuaternion(tmpQuat)).normalize();
         const distanceToPlayer = Math.abs(
             tmpNormal.dot(sideToPlayer.copy(playerYaw.position).sub(tmpWorldPos))
         );
+        portalDistances.set(portal, distanceToPlayer);
         updatePortalRenderTargetResolution(portal, distanceToPlayer);
         finalRtSizes.set(portal, portal.currentRtSize);
 
@@ -2185,9 +2222,10 @@ function updatePortalTextures() {
         tmpWorldPos.setFromMatrixPosition(portal.levelCameras[1].matrixWorld);
         configurePortalCameraFromPosition(portal, tmpWorldPos, portal.levelCameras[2]);
     }
+    if (activePortals.length === 0) return;
 
     const setAllPortalSurfaceTextures = (textureSelector) => {
-        for (const portal of world.portals) {
+        for (const portal of activePortals) {
             portal.frontSurface.material.map = textureSelector(portal);
             portal.backSurface.material.map = textureSelector(portal);
             portal.frontSurface.material.needsUpdate = true;
@@ -2211,7 +2249,16 @@ function updatePortalTextures() {
     const renderPortalPrepass = (scale, prepassIndex, cameraLevelIndex, sampledLevelKey) => {
         // Ensure portal surfaces are updated immediately before this pass.
         setPortalTexturesFromLevel(sampledLevelKey);
-        for (const portal of world.portals) {
+        for (const portal of activePortals) {
+            const finalSize = finalRtSizes.get(portal);
+            const portalDistance = portalDistances.get(portal) ?? Infinity;
+            if (finalSize == null) continue;
+            const shouldRunLowResPass =
+                (prepassIndex === 0 && portalDistance <= PORTAL_PREPASS_NEAR_DISTANCE * 1.6) ||
+                (frameCounter % PORTAL_PREPASS_UPDATE_INTERVAL_FRAMES === 0 &&
+                    finalSize >= 512 &&
+                    portalDistance <= PORTAL_PREPASS_NEAR_DISTANCE);
+            if (!shouldRunLowResPass) continue;
             // Allow seeing recursive portal iterations by keeping destination surface visible,
             // but hide the destination portal surface (camera sits at that portal plane)
             // to avoid direct self-feedback.
@@ -2224,7 +2271,6 @@ function updatePortalTextures() {
             portal.destination.frontSurface.visible = false;
             portal.destination.backSurface.visible = false;
 
-            const finalSize = finalRtSizes.get(portal);
             const target = portal.prepassTargets[prepassIndex];
             const passSize = quantizePortalResolution(
                 Math.max(PORTAL_RT_MIN, finalSize * scale)
@@ -2242,7 +2288,7 @@ function updatePortalTextures() {
     const renderPortalFinalPass = () => {
         // Ensure level-1 samples the intended level textures right before final render.
         setPortalTexturesFromLevel("l2");
-        for (const portal of world.portals) {
+        for (const portal of activePortals) {
             const activeCamPos = tmpWorldPos.setFromMatrixPosition(
                 portal.levelCameras[0].matrixWorld
             );
@@ -2263,15 +2309,23 @@ function updatePortalTextures() {
         }
     };
 
+    const originalOverrideMaterial = currentWorld.scene.overrideMaterial;
+    const prepassOverrideMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        side: THREE.DoubleSide,
+    });
+    currentWorld.scene.overrideMaterial = prepassOverrideMaterial;
     // Render deepest first with destination-texture chaining:
     // final textures -> L3 at 10% -> use L3 textures -> L2 at 10% -> use L2 textures -> L1 final.
-    renderPortalPrepass(0.1, 0, 2, "final");
-    renderPortalPrepass(0.1, 1, 1, "l3");
+    renderPortalPrepass(0.07, 0, 2, "final");
+    renderPortalPrepass(0.07, 1, 1, "l3");
+    currentWorld.scene.overrideMaterial = originalOverrideMaterial;
+    prepassOverrideMaterial.dispose();
     renderPortalFinalPass();
     setPortalTexturesFromLevel("final");
     renderer.setRenderTarget(null);
 
-    for (const portal of world.portals) {
+    for (const portal of activePortals) {
         updatePortalSideVisibility(portal);
     }
 }
@@ -3663,12 +3717,17 @@ function resolveExtraEnemyWallCollision(enemy, desiredDir, dt) {
 }
 
 function animate() {
+    frameCounter += 1;
     const dt = Math.min(clock.getDelta(), 0.033);
     if (gameState !== GAME_STATE_PLAYING) {
         camera.updateMatrixWorld(true);
         updatePortalTextures();
         renderer.render(currentWorld.scene, camera);
-        drawMinimap();
+        minimapUpdateTimer += dt;
+        if (minimapUpdateTimer >= MINIMAP_UPDATE_INTERVAL) {
+            drawMinimap();
+            minimapUpdateTimer = 0;
+        }
         drawWeaponIndicator();
         drawBallReserveHud();
         drawPlayerHealthHud();
@@ -3820,16 +3879,6 @@ function animate() {
             shootEnemyProjectile(orbEntity.position);
             enemyShootCooldown = ENEMY_PROJECTILE_COOLDOWN;
         }
-        const startCellKey = [
-            Math.round(orbEntity.position.x / ENEMY_GRID_SIZE),
-            Math.round(ENEMY_BASE_Y / ENEMY_GRID_SIZE),
-            Math.round(orbEntity.position.z / ENEMY_GRID_SIZE),
-        ].join("|");
-        const goalCellKey = [
-            Math.round(playerYaw.position.x / ENEMY_GRID_SIZE),
-            Math.round(ENEMY_BASE_Y / ENEMY_GRID_SIZE),
-            Math.round(playerYaw.position.z / ENEMY_GRID_SIZE),
-        ].join("|");
         if (
             enemyPath.length === 0 ||
             clock.elapsedTime - enemyPathLastReplan >= ENEMY_PATH_REPLAN_INTERVAL
@@ -3837,8 +3886,6 @@ function animate() {
             enemyPath = computeEnemyGridPath(orbEntity.position, playerYaw.position);
             enemyPathIndex = 0;
             enemyPathLastReplan = clock.elapsedTime;
-            enemyPathStartKey = startCellKey;
-            enemyPathGoalKey = goalCellKey;
         }
 
         if (playerDistanceNow > ENEMY_FOLLOW_DISTANCE && enemyPath.length > 0) {
@@ -3978,7 +4025,9 @@ function animate() {
                 const s = THREE.MathUtils.lerp(p.minScale, p.maxScale, pulse);
                 p.mesh.scale.setScalar(s);
                 p.mesh.material.opacity = 0.15 + 0.85 * pulse;
-                p.mesh.lookAt(playerYaw.position);
+                if (frameCounter % PARTICLE_LOOKAT_INTERVAL_FRAMES === 0) {
+                    p.mesh.lookAt(playerYaw.position);
+                }
             }
 
             if (e.damageTimer > 0) e.damageTimer -= dt;
@@ -4051,7 +4100,9 @@ function animate() {
             const s = THREE.MathUtils.lerp(p.minScale, p.maxScale, pulse);
             p.mesh.scale.setScalar(s);
             p.mesh.material.opacity = 0.15 + 0.85 * pulse;
-            p.mesh.lookAt(playerYaw.position);
+            if (frameCounter % PARTICLE_LOOKAT_INTERVAL_FRAMES === 0) {
+                p.mesh.lookAt(playerYaw.position);
+            }
         }
     }
     if (enemyDamageTimer > 0) {
@@ -4097,7 +4148,11 @@ function animate() {
     camera.updateMatrixWorld(true);
     updatePortalTextures();
     renderer.render(currentWorld.scene, camera);
-    drawMinimap();
+    minimapUpdateTimer += dt;
+    if (minimapUpdateTimer >= MINIMAP_UPDATE_INTERVAL) {
+        drawMinimap();
+        minimapUpdateTimer = 0;
+    }
     drawWeaponIndicator();
     drawBallReserveHud();
     drawPlayerHealthHud();
