@@ -1124,18 +1124,24 @@ portalMaskMaterial.side = THREE.DoubleSide;
 const PORTAL_WIDTH = 2.8;
 const PORTAL_HEIGHT = 4.0;
 const PORTAL_RT_MIN = 128;
-const PORTAL_RT_MAX_LOW_SPEC = 1024;
+const PORTAL_RT_MAX_LOW_SPEC = 4096;
 const PORTAL_RT_MAX = Math.min(renderer.capabilities.maxTextureSize, PORTAL_RT_MAX_LOW_SPEC);
-const PORTAL_RT_SCALE = 8192;
-const PORTAL_RT_DISTANCE_BIAS = 0.01;
-const PORTAL_RT_SUPERSAMPLE = 1;
-const PORTAL_RT_QUALITY_BOOST = 1.6;
-const PORTAL_PREPASS_UPDATE_INTERVAL_FRAMES = 2;
-const PORTAL_PREPASS_NEAR_DISTANCE = 18;
+const PORTAL_RT_LINEAR_NEAR_DISTANCE = 2.0;
+const PORTAL_RT_LINEAR_FAR_DISTANCE = 28.0;
+const PORTAL_L2_RT_LINEAR_NEAR_DISTANCE = 4.0;
+const PORTAL_L2_RT_LINEAR_FAR_DISTANCE = 56.0;
+const PORTAL_L3_RT_LINEAR_NEAR_DISTANCE = 8.0;
+const PORTAL_L3_RT_LINEAR_FAR_DISTANCE = 72.0;
+const PORTAL_L2_RT_MIN = 128;
+const PORTAL_L3_RT_MIN = 128;
 const MINIMAP_UPDATE_INTERVAL = 1 / 15;
 const PARTICLE_LOOKAT_INTERVAL_FRAMES = 3;
 let frameCounter = 0;
 let minimapUpdateTimer = 0;
+let portalLevel1DebugRes = 0;
+let portalLevel2DebugRes = 0;
+let portalLevel3DebugRes = 0;
+let portalResolutionDebugText = "L1: -\nL2: -\nL3: -";
 
 function createPortalFrame(color = 0x66ccff) {
     const group = new THREE.Group();
@@ -1173,6 +1179,8 @@ function createPortal(ownerWorld, x, y, z, ry, color) {
     prepassRtLow.texture.colorSpace = THREE.SRGBColorSpace;
     const prepassRtMid = new THREE.WebGLRenderTarget(PORTAL_RT_MIN, PORTAL_RT_MIN);
     prepassRtMid.texture.colorSpace = THREE.SRGBColorSpace;
+    const seedRt = new THREE.WebGLRenderTarget(PORTAL_RT_MIN, PORTAL_RT_MIN);
+    seedRt.texture.colorSpace = THREE.SRGBColorSpace;
 
     const portalCam = new THREE.PerspectiveCamera(75, 1, 0.01, 1000);
     portalCam.matrixAutoUpdate = false;
@@ -1224,6 +1232,9 @@ function createPortal(ownerWorld, x, y, z, ry, color) {
         currentRtSize: initialRtSize,
         prepassTargets: [prepassRtLow, prepassRtMid],
         prepassSizes: [PORTAL_RT_MIN, PORTAL_RT_MIN],
+        prepassHasData: [false, false],
+        seedTarget: seedRt,
+        seedSize: PORTAL_RT_MIN,
         camera: portalCam,
         levelCameras: [portalCam, portalCamL2, portalCamL3],
         cameraMarker,
@@ -1358,8 +1369,8 @@ let currentWeapon = WEAPON_BALL;
 
 const fpsHud = document.createElement("div");
 fpsHud.style.position = "fixed";
-fpsHud.style.top = "12px";
-fpsHud.style.left = "12px";
+fpsHud.style.bottom = "12px";
+fpsHud.style.right = "12px";
 fpsHud.style.padding = "6px 9px";
 fpsHud.style.background = "rgba(0,0,0,0.45)";
 fpsHud.style.color = "#fff";
@@ -1599,6 +1610,80 @@ document.body.appendChild(minimapCanvas);
 const minimapCtx = minimapCanvas.getContext("2d");
 const minimapDir = new THREE.Vector3();
 const minimapTarget = new THREE.Vector3();
+const portalResHud = document.createElement("div");
+portalResHud.style.position = "fixed";
+portalResHud.style.top = `${12 + minimapCanvas.height + 8}px`;
+portalResHud.style.right = "12px";
+portalResHud.style.padding = "6px 9px";
+portalResHud.style.background = "rgba(0,0,0,0.45)";
+portalResHud.style.color = "#fff";
+portalResHud.style.fontFamily = "monospace";
+portalResHud.style.fontSize = "12px";
+portalResHud.style.borderRadius = "8px";
+portalResHud.style.userSelect = "none";
+portalResHud.style.pointerEvents = "none";
+portalResHud.style.whiteSpace = "pre";
+portalResHud.style.zIndex = "12";
+portalResHud.textContent = "L1: -\nL2: -\nL3: -";
+document.body.appendChild(portalResHud);
+const portalPreviewScene = new THREE.Scene();
+const portalPreviewCamera = new THREE.OrthographicCamera(0, window.innerWidth, window.innerHeight, 0, -1, 1);
+portalPreviewCamera.position.z = 1;
+const PORTAL_PREVIEW_W = 104;
+const PORTAL_PREVIEW_H = 62;
+const PORTAL_PREVIEW_GAP = 8;
+const PORTAL_PREVIEW_MARGIN = 12;
+const portalPreviewMeshes = [];
+const makePortalPreviewMesh = (texture) => {
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+            map: texture,
+            depthTest: false,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+        })
+    );
+    mesh.renderOrder = 20000;
+    portalPreviewScene.add(mesh);
+    portalPreviewMeshes.push(mesh);
+};
+// Row A: L1/L2/L3
+makePortalPreviewMesh(portalA.renderTarget.texture);
+makePortalPreviewMesh(portalA.prepassTargets[1].texture);
+makePortalPreviewMesh(portalA.prepassTargets[0].texture);
+// Row B: L1/L2/L3
+makePortalPreviewMesh(portalB.renderTarget.texture);
+makePortalPreviewMesh(portalB.prepassTargets[1].texture);
+makePortalPreviewMesh(portalB.prepassTargets[0].texture);
+
+function updatePortalPreviewLayout() {
+    const rect = portalResHud.getBoundingClientRect();
+    const totalW = PORTAL_PREVIEW_W * 3 + PORTAL_PREVIEW_GAP * 2;
+    const left = window.innerWidth - PORTAL_PREVIEW_MARGIN - totalW;
+    const top = rect.bottom + 8;
+    for (let row = 0; row < 2; row += 1) {
+        for (let col = 0; col < 3; col += 1) {
+            const i = row * 3 + col;
+            const mesh = portalPreviewMeshes[i];
+            mesh.scale.set(PORTAL_PREVIEW_W, PORTAL_PREVIEW_H, 1);
+            mesh.position.set(
+                left + col * (PORTAL_PREVIEW_W + PORTAL_PREVIEW_GAP) + PORTAL_PREVIEW_W * 0.5,
+                top + row * (PORTAL_PREVIEW_H + PORTAL_PREVIEW_GAP) + PORTAL_PREVIEW_H * 0.5,
+                0
+            );
+        }
+    }
+}
+
+function renderPortalPreviewOverlay() {
+    updatePortalPreviewLayout();
+    const prevAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    renderer.render(portalPreviewScene, portalPreviewCamera);
+    renderer.autoClear = prevAutoClear;
+}
 
 const weaponIndicatorCanvas = document.createElement("canvas");
 weaponIndicatorCanvas.width = 72;
@@ -2100,6 +2185,7 @@ const destNormalWorld = new THREE.Vector3();
 const sideToPlayer = new THREE.Vector3();
 const portalViewDir = new THREE.Vector3();
 const portalToPortal = new THREE.Vector3();
+const screenResolution = new THREE.Vector2();
 
 function isPortalRenderableFromViewer(portal, viewerPosition = playerYaw.position, viewerForward = null) {
     portal.mesh.getWorldPosition(tmpWorldPos);
@@ -2191,28 +2277,21 @@ function configurePortalCameraFromPosition(portal, referencePosition, targetCame
 }
 
 function updatePortalTextures() {
-    // Start hidden, then selectively enable while rendering portal textures.
-    for (const portal of world.portals) {
-        portal.frontSurface.visible = false;
-        portal.backSurface.visible = false;
-    }
-
-    camera.getWorldDirection(portalViewDir).normalize();
+    renderer.getDrawingBufferSize(screenResolution);
+    const portalL1MaxScreen = screenResolution.x;
     const activePortals = [];
     const portalDistances = new Map();
     const finalRtSizes = new Map();
+    const portalResolutions = new Map();
+    const portalRenderFlags = new Map();
     for (const portal of world.portals) {
-        if (!isPortalRenderableFromViewer(portal, playerYaw.position, portalViewDir)) continue;
-        activePortals.push(portal);
-        // Scale quality by perpendicular distance to the portal plane.
+        // Keep both portal render targets alive every frame to avoid black
+        // recursive samples when one portal is temporarily culled by view.
         portal.mesh.getWorldPosition(tmpWorldPos);
-        tmpNormal.set(0, 0, 1).applyQuaternion(portal.mesh.getWorldQuaternion(tmpQuat)).normalize();
-        const distanceToPlayer = Math.abs(
-            tmpNormal.dot(sideToPlayer.copy(playerYaw.position).sub(tmpWorldPos))
-        );
+        activePortals.push(portal);
+        // Scale quality by absolute 3D distance to portal center.
+        const distanceToPlayer = playerYaw.position.distanceTo(tmpWorldPos);
         portalDistances.set(portal, distanceToPlayer);
-        updatePortalRenderTargetResolution(portal, distanceToPlayer);
-        finalRtSizes.set(portal, portal.currentRtSize);
 
         // Build camera hierarchy:
         // L1 uses player position, L2 uses L1 camera position, L3 uses L2 camera position.
@@ -2221,8 +2300,42 @@ function updatePortalTextures() {
         configurePortalCameraFromPosition(portal, tmpWorldPos, portal.levelCameras[1]);
         tmpWorldPos.setFromMatrixPosition(portal.levelCameras[1].matrixWorld);
         configurePortalCameraFromPosition(portal, tmpWorldPos, portal.levelCameras[2]);
+
+        // Per-level render eligibility by FoV rules:
+        // - if not in player FoV -> render nothing (L1/L2/L3)
+        // - if not in C1 FoV -> skip L2/L3
+        // - if not in C2 FoV -> skip L3
+        const inPlayerFov = isPortalInCameraFov(portal, camera);
+        const inC1Fov = isPortalInCameraFov(portal, portal.levelCameras[0]);
+        const inC2Fov = isPortalInCameraFov(portal, portal.levelCameras[1]);
+        portalRenderFlags.set(portal, {
+            canL1: inPlayerFov,
+            canL2: inPlayerFov && inC1Fov,
+            canL3: inPlayerFov && inC1Fov && inC2Fov,
+        });
+
+        const resSet = computePortalResolutionSetFromCameraDistances(portal, portalL1MaxScreen);
+        portalResolutions.set(portal, resSet);
+        if (portal.currentRtSize !== resSet.l1) {
+            portal.renderTarget.setSize(resSet.l1, resSet.l1);
+            portal.currentRtSize = resSet.l1;
+        }
+        finalRtSizes.set(portal, portal.currentRtSize);
     }
-    if (activePortals.length === 0) return;
+    if (activePortals.length === 0) {
+        portalResolutionDebugText = "A d:- L1:- L2:- L3:-\nB d:- L1:- L2:- L3:-";
+        // Keep previous frame textures; only refresh side visibility from player view.
+        for (const portal of world.portals) {
+            updatePortalSideVisibility(portal);
+        }
+        return;
+    }
+
+    // Hide only portals that will be actively re-rendered this frame.
+    for (const portal of activePortals) {
+        portal.frontSurface.visible = false;
+        portal.backSurface.visible = false;
+    }
 
     const setAllPortalSurfaceTextures = (textureSelector) => {
         for (const portal of activePortals) {
@@ -2234,31 +2347,42 @@ function updatePortalTextures() {
     };
 
     const setPortalTexturesFromLevel = (levelKey) => {
+        if (levelKey === "seed") {
+            setAllPortalSurfaceTextures((portal) => portal.seedTarget.texture);
+            return;
+        }
         if (levelKey === "final") {
             setAllPortalSurfaceTextures((portal) => portal.renderTarget.texture);
             return;
         }
         if (levelKey === "l3") {
-            setAllPortalSurfaceTextures((portal) => portal.prepassTargets[0].texture);
+            setAllPortalSurfaceTextures((portal) =>
+                portal.prepassHasData[0]
+                    ? portal.prepassTargets[0].texture
+                    : portal.renderTarget.texture
+            );
             return;
         }
         // levelKey === "l2"
-        setAllPortalSurfaceTextures((portal) => portal.prepassTargets[1].texture);
+        setAllPortalSurfaceTextures((portal) =>
+            portal.prepassHasData[1]
+                ? portal.prepassTargets[1].texture
+                : (portal.prepassHasData[0]
+                    ? portal.prepassTargets[0].texture
+                    : portal.renderTarget.texture)
+        );
     };
 
-    const renderPortalPrepass = (scale, prepassIndex, cameraLevelIndex, sampledLevelKey) => {
+    const renderPortalPrepass = (prepassIndex, cameraLevelIndex, sampledLevelKey) => {
         // Ensure portal surfaces are updated immediately before this pass.
         setPortalTexturesFromLevel(sampledLevelKey);
+        let maxPassSize = 0;
         for (const portal of activePortals) {
             const finalSize = finalRtSizes.get(portal);
-            const portalDistance = portalDistances.get(portal) ?? Infinity;
             if (finalSize == null) continue;
-            const shouldRunLowResPass =
-                (prepassIndex === 0 && portalDistance <= PORTAL_PREPASS_NEAR_DISTANCE * 1.6) ||
-                (frameCounter % PORTAL_PREPASS_UPDATE_INTERVAL_FRAMES === 0 &&
-                    finalSize >= 512 &&
-                    portalDistance <= PORTAL_PREPASS_NEAR_DISTANCE);
-            if (!shouldRunLowResPass) continue;
+            const flags = portalRenderFlags.get(portal);
+            const canRenderThisPass = prepassIndex === 0 ? flags?.canL3 : flags?.canL2;
+            if (!canRenderThisPass) continue;
             // Allow seeing recursive portal iterations by keeping destination surface visible,
             // but hide the destination portal surface (camera sits at that portal plane)
             // to avoid direct self-feedback.
@@ -2272,9 +2396,9 @@ function updatePortalTextures() {
             portal.destination.backSurface.visible = false;
 
             const target = portal.prepassTargets[prepassIndex];
-            const passSize = quantizePortalResolution(
-                Math.max(PORTAL_RT_MIN, finalSize * scale)
-            );
+            const resSet = portalResolutions.get(portal);
+            const passSize = prepassIndex === 0 ? (resSet?.l3 ?? PORTAL_L3_RT_MIN) : (resSet?.l2 ?? PORTAL_L2_RT_MIN);
+            maxPassSize = Math.max(maxPassSize, passSize);
             if (portal.prepassSizes[prepassIndex] !== passSize) {
                 target.setSize(passSize, passSize);
                 portal.prepassSizes[prepassIndex] = passSize;
@@ -2282,6 +2406,12 @@ function updatePortalTextures() {
             renderer.setRenderTarget(target);
             renderer.clear();
             renderer.render(currentWorld.scene, portal.levelCameras[cameraLevelIndex]);
+            portal.prepassHasData[prepassIndex] = true;
+        }
+        if (prepassIndex === 0) {
+            portalLevel3DebugRes = maxPassSize;
+        } else {
+            portalLevel2DebugRes = maxPassSize;
         }
     };
 
@@ -2289,6 +2419,8 @@ function updatePortalTextures() {
         // Ensure level-1 samples the intended level textures right before final render.
         setPortalTexturesFromLevel("l2");
         for (const portal of activePortals) {
+            const flags = portalRenderFlags.get(portal);
+            if (!flags?.canL1) continue;
             const activeCamPos = tmpWorldPos.setFromMatrixPosition(
                 portal.levelCameras[0].matrixWorld
             );
@@ -2309,44 +2441,226 @@ function updatePortalTextures() {
         }
     };
 
-    const originalOverrideMaterial = currentWorld.scene.overrideMaterial;
-    const prepassOverrideMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        side: THREE.DoubleSide,
-    });
-    currentWorld.scene.overrideMaterial = prepassOverrideMaterial;
+    const renderPortalSeedPass = () => {
+        // Seed L3 with a guaranteed non-recursive scene render (never empty/black).
+        for (const p of world.portals) {
+            p.frontSurface.visible = false;
+            p.backSurface.visible = false;
+        }
+        for (const portal of activePortals) {
+            const finalSize = finalRtSizes.get(portal);
+            if (finalSize == null) continue;
+            const flags = portalRenderFlags.get(portal);
+            if (!flags?.canL3) continue;
+            const resSet = portalResolutions.get(portal);
+            const l3Size = resSet?.l3 ?? PORTAL_L3_RT_MIN;
+            if (portal.seedSize !== l3Size) {
+                portal.seedTarget.setSize(l3Size, l3Size);
+                portal.seedSize = l3Size;
+            }
+            renderer.setRenderTarget(portal.seedTarget);
+            renderer.clear();
+            renderer.render(currentWorld.scene, portal.levelCameras[2]);
+        }
+    };
+
+    portalLevel1DebugRes = 0;
+    portalLevel2DebugRes = 0;
+    portalLevel3DebugRes = 0;
+    for (const portal of activePortals) {
+        const s = finalRtSizes.get(portal) ?? 0;
+        portalLevel1DebugRes = Math.max(portalLevel1DebugRes, s);
+    }
     // Render deepest first with destination-texture chaining:
-    // final textures -> L3 at 10% -> use L3 textures -> L2 at 10% -> use L2 textures -> L1 final.
-    renderPortalPrepass(0.07, 0, 2, "final");
-    renderPortalPrepass(0.07, 1, 1, "l3");
-    currentWorld.scene.overrideMaterial = originalOverrideMaterial;
-    prepassOverrideMaterial.dispose();
+    // seed textures -> L3 dynamic -> use L3 textures -> L2 dynamic -> use L2 textures -> L1 final.
+    renderPortalSeedPass();
+    renderPortalPrepass(0, 2, "seed");
+    renderPortalPrepass(1, 1, "l3");
     renderPortalFinalPass();
     setPortalTexturesFromLevel("final");
     renderer.setRenderTarget(null);
 
-    for (const portal of activePortals) {
+    for (const portal of world.portals) {
         updatePortalSideVisibility(portal);
     }
+
+    // Readable multi-line debug text: resolutions + all camera labels/distances.
+    const lines = [];
+    const fmt = (v, d = 2) => (v == null ? "-" : v.toFixed(d));
+    const fmti = (v) => (v == null ? "-" : `${v}`);
+
+    const centerA = tmpWorldPos.setFromMatrixPosition(portalA.mesh.matrixWorld).clone();
+    const centerB = tmpLocalPos.setFromMatrixPosition(portalB.mesh.matrixWorld).clone();
+
+    const resLine = (p, label) => {
+        const dist = portalDistances.get(p);
+        const l1 = finalRtSizes.get(p);
+        if (dist == null || l1 == null) return `Portal ${label}: d(player):-  L1:- L2:- L3:-`;
+        const resSet = portalResolutions.get(p);
+        const l2 = resSet?.l2 ?? "-";
+        const l3 = resSet?.l3 ?? "-";
+        return `Portal ${label}: d(player):${fmt(dist, 1)}  L1:${fmti(l1)} L2:${fmti(l2)} L3:${fmti(l3)}`;
+    };
+    lines.push(resLine(portalA, "A"));
+    lines.push(resLine(portalB, "B"));
+    lines.push("Cameras (distance to portal centers)");
+
+    const pushCamLine = (label, pos) => {
+        lines.push(`  ${label} -> A:${fmt(pos.distanceTo(centerA))}  B:${fmt(pos.distanceTo(centerB))}`);
+    };
+    const playerCamPos = tmpPrevDelta.setFromMatrixPosition(camera.matrixWorld).clone();
+    pushCamLine("Player", playerCamPos);
+    pushCamLine("A-L1", tmpCurDelta.setFromMatrixPosition(portalA.levelCameras[0].matrixWorld).clone());
+    pushCamLine("A-L2", tmpMoveDelta.setFromMatrixPosition(portalA.levelCameras[1].matrixWorld).clone());
+    pushCamLine("A-L3", tmpHitPoint.setFromMatrixPosition(portalA.levelCameras[2].matrixWorld).clone());
+    pushCamLine("B-L1", tmpRemainingMove.setFromMatrixPosition(portalB.levelCameras[0].matrixWorld).clone());
+    pushCamLine("B-L2", ballPrevPos.setFromMatrixPosition(portalB.levelCameras[1].matrixWorld).clone());
+    pushCamLine("B-L3", cameraShootOrigin.setFromMatrixPosition(portalB.levelCameras[2].matrixWorld).clone());
+    lines.push("FoV flags (portal center in camera frustum)");
+    const tf = (v) => (v ? "Y" : "N");
+    lines.push(
+        `  Portal A in C1/C2/C3: ${tf(isPortalInCameraFov(portalA, portalA.levelCameras[0]))}/${tf(isPortalInCameraFov(portalA, portalA.levelCameras[1]))}/${tf(isPortalInCameraFov(portalA, portalA.levelCameras[2]))}`
+    );
+    lines.push(
+        `  Portal B in C1/C2/C3: ${tf(isPortalInCameraFov(portalB, portalB.levelCameras[0]))}/${tf(isPortalInCameraFov(portalB, portalB.levelCameras[1]))}/${tf(isPortalInCameraFov(portalB, portalB.levelCameras[2]))}`
+    );
+    lines.push(
+        `  Portal A in Player FoV: ${tf(isPortalInCameraFov(portalA, camera))}`
+    );
+    lines.push(
+        `  Portal B in Player FoV: ${tf(isPortalInCameraFov(portalB, camera))}`
+    );
+    portalResolutionDebugText = lines.join("\n");
 }
 
 function quantizePortalResolution(size) {
     const clamped = THREE.MathUtils.clamp(size, PORTAL_RT_MIN, PORTAL_RT_MAX);
-    const pow2 = 2 ** Math.ceil(Math.log2(clamped));
-    return THREE.MathUtils.clamp(pow2, PORTAL_RT_MIN, PORTAL_RT_MAX);
+    return Math.round(clamped);
 }
 
-function updatePortalRenderTargetResolution(portal, distanceToPlayer) {
-    const inverseDistanceScaled =
-        (PORTAL_RT_SCALE * PORTAL_RT_SUPERSAMPLE * PORTAL_RT_QUALITY_BOOST) /
-        (distanceToPlayer + PORTAL_RT_DISTANCE_BIAS);
-    const clamped = THREE.MathUtils.clamp(inverseDistanceScaled, PORTAL_RT_MIN, PORTAL_RT_MAX);
+function updatePortalRenderTargetResolution(portal, distanceToPlayer, l1MaxSize) {
+    const denom = Math.max(1e-6, PORTAL_RT_LINEAR_FAR_DISTANCE - PORTAL_RT_LINEAR_NEAR_DISTANCE);
+    const t = THREE.MathUtils.clamp(
+        (distanceToPlayer - PORTAL_RT_LINEAR_NEAR_DISTANCE) / denom,
+        0,
+        1
+    );
+    const cappedMax = THREE.MathUtils.clamp(l1MaxSize, PORTAL_RT_MIN, PORTAL_RT_MAX);
+    const linearSize = THREE.MathUtils.lerp(cappedMax, PORTAL_RT_MIN, t);
+    const clamped = THREE.MathUtils.clamp(linearSize, PORTAL_RT_MIN, cappedMax);
     const targetSize = quantizePortalResolution(clamped);
 
     if (portal.currentRtSize !== targetSize) {
         portal.renderTarget.setSize(targetSize, targetSize);
         portal.currentRtSize = targetSize;
     }
+}
+
+function isPointInRectNdc(p) {
+    return p.x >= -1 && p.x <= 1 && p.y >= -1 && p.y <= 1;
+}
+
+function isPointInPolygon2D(point, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+        const xi = poly[i].x;
+        const yi = poly[i].y;
+        const xj = poly[j].x;
+        const yj = poly[j].y;
+        const intersect = ((yi > point.y) !== (yj > point.y)) &&
+            (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 1e-8) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function orientation2D(a, b, c) {
+    return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+}
+
+function onSegment2D(a, b, c) {
+    return (
+        b.x <= Math.max(a.x, c.x) &&
+        b.x >= Math.min(a.x, c.x) &&
+        b.y <= Math.max(a.y, c.y) &&
+        b.y >= Math.min(a.y, c.y)
+    );
+}
+
+function segmentsIntersect2D(p1, q1, p2, q2) {
+    const o1 = orientation2D(p1, q1, p2);
+    const o2 = orientation2D(p1, q1, q2);
+    const o3 = orientation2D(p2, q2, p1);
+    const o4 = orientation2D(p2, q2, q1);
+    if ((o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0)) return true;
+    const eps = 1e-8;
+    if (Math.abs(o1) < eps && onSegment2D(p1, p2, q1)) return true;
+    if (Math.abs(o2) < eps && onSegment2D(p1, q2, q1)) return true;
+    if (Math.abs(o3) < eps && onSegment2D(p2, p1, q2)) return true;
+    if (Math.abs(o4) < eps && onSegment2D(p2, q1, q2)) return true;
+    return false;
+}
+
+function polygonIntersectsScreenRectNdc(poly) {
+    const rect = [
+        { x: -1, y: -1 },
+        { x: 1, y: -1 },
+        { x: 1, y: 1 },
+        { x: -1, y: 1 },
+    ];
+    for (let i = 0; i < poly.length; i += 1) {
+        if (isPointInRectNdc(poly[i])) return true;
+    }
+    for (let i = 0; i < rect.length; i += 1) {
+        if (isPointInPolygon2D(rect[i], poly)) return true;
+    }
+    for (let i = 0; i < poly.length; i += 1) {
+        const a1 = poly[i];
+        const a2 = poly[(i + 1) % poly.length];
+        for (let j = 0; j < rect.length; j += 1) {
+            const b1 = rect[j];
+            const b2 = rect[(j + 1) % rect.length];
+            if (segmentsIntersect2D(a1, a2, b1, b2)) return true;
+        }
+    }
+    return false;
+}
+
+function isPortalInCameraFov(portal, cam) {
+    const projectedPoly = [];
+    let hasCornerInFront = false;
+    for (let i = 0; i < portalCorners.length; i += 1) {
+        portalCornerWorld.copy(portalCorners[i]).applyMatrix4(portal.mesh.matrixWorld);
+        portalCornerCamera.copy(portalCornerWorld).applyMatrix4(cam.matrixWorldInverse);
+        if (portalCornerCamera.z < 0) hasCornerInFront = true;
+        tmpHitPoint.copy(portalCornerWorld).project(cam);
+        projectedPoly.push({ x: tmpHitPoint.x, y: tmpHitPoint.y });
+    }
+    if (!hasCornerInFront) return false;
+    return polygonIntersectsScreenRectNdc(projectedPoly);
+}
+
+function computePortalResolutionSetFromCameraDistances(portal, maxRes) {
+    const safe = (v) => Math.max(1e-4, v);
+    portal.destination.mesh.getWorldPosition(tmpWorldPos);
+    const d1 = tmpPrevDelta
+        .setFromMatrixPosition(portal.levelCameras[0].matrixWorld)
+        .distanceTo(tmpWorldPos);
+    const d2 = tmpCurDelta
+        .setFromMatrixPosition(portal.levelCameras[1].matrixWorld)
+        .distanceTo(tmpWorldPos);
+    const d3 = tmpMoveDelta
+        .setFromMatrixPosition(portal.levelCameras[2].matrixWorld)
+        .distanceTo(tmpWorldPos);
+
+    const l1Raw = maxRes / safe(d1);
+    const l2Raw = (maxRes / safe(d2)) * (Math.max(PORTAL_WIDTH, d1) / safe(d2));
+    const l3Raw = (maxRes / safe(d3)) * (d2 / safe(d3));
+
+    const l1 = quantizePortalResolution(l1Raw);
+    const l2 = Math.max(PORTAL_L2_RT_MIN, Math.min(PORTAL_RT_MAX, Math.round(l2Raw)));
+    const l3 = Math.max(PORTAL_L3_RT_MIN, Math.min(PORTAL_RT_MAX, Math.round(l3Raw)));
+    return { l1, l2, l3, d1, d2, d3 };
 }
 
 const tmpWorldPos = new THREE.Vector3();
@@ -4147,7 +4461,11 @@ function animate() {
 
     camera.updateMatrixWorld(true);
     updatePortalTextures();
+    if (frameCounter % 10 === 0) {
+        portalResHud.textContent = portalResolutionDebugText;
+    }
     renderer.render(currentWorld.scene, camera);
+    renderPortalPreviewOverlay();
     minimapUpdateTimer += dt;
     if (minimapUpdateTimer >= MINIMAP_UPDATE_INTERVAL) {
         drawMinimap();
@@ -4171,4 +4489,8 @@ window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    portalResHud.style.top = `${12 + minimapCanvas.height + 8}px`;
+    portalPreviewCamera.right = window.innerWidth;
+    portalPreviewCamera.bottom = window.innerHeight;
+    portalPreviewCamera.updateProjectionMatrix();
 });
