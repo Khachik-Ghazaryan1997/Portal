@@ -12,6 +12,42 @@ document.body.appendChild(renderer.domElement);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
+// Audio system
+const audioListener = new THREE.AudioListener();
+camera.add(audioListener);
+const audioLoader = new THREE.AudioLoader();
+const soundBuffers = {};
+
+function loadSound(name, path) {
+    audioLoader.load(path, (buffer) => { soundBuffers[name] = buffer; });
+}
+loadSound("ballThrow", "Sounds/BallThrow.mp3");
+loadSound("ballBounce", "Sounds/BallBounce.mp3");
+loadSound("ballHitRobot", "Sounds/BallHitRobot.mp3");
+loadSound("enemyDeath", "Sounds/EnemyDeath.mp3");
+loadSound("shootBluePortal", "Sounds/ShootBluePortal.mp3");
+loadSound("shootRedPortal", "Sounds/ShootRedPortal.mp3");
+loadSound("openPortalBlue", "Sounds/OpenPortalBlue.mp3");
+loadSound("openPortalRed", "Sounds/OpenPortalRed.mp3");
+loadSound("closePortal", "Sounds/ClosePortal.mp3");
+loadSound("enterBluePortal", "Sounds/EnterBluePortal.mp3");
+loadSound("enterRedPortal", "Sounds/EnterRedPortal.mp3");
+loadSound("exitBluePortal", "Sounds/ExitBluePortal.mp3");
+loadSound("exitRedPortal", "Sounds/ExitRedPortal.mp3");
+loadSound("invalidSurface", "Sounds/InvalidSurfaceForPortal.mp3");
+loadSound("portalGunPowerUp", "Sounds/PortalGunPowerUp.mp3");
+
+const BALL_BOUNCE_SOUND_MIN_SPEED = 1.5;
+
+function playSound(name, volume = 1.0) {
+    const buffer = soundBuffers[name];
+    if (!buffer) return;
+    const sound = new THREE.Audio(audioListener);
+    sound.setBuffer(buffer);
+    sound.setVolume(volume);
+    sound.play();
+}
+
 const world = {
     name: "main",
     scene: new THREE.Scene(),
@@ -513,12 +549,14 @@ function computeEnemyGridPath(startWorld, goalWorld) {
 
 function triggerEnemyDamage(damage) {
     if (!enemyAlive) return;
+    playSound("ballHitRobot");
     enemyHealth = Math.max(0, enemyHealth - damage);
     enemyDisplayedHealth = enemyHealth;
     enemyHealthBarTimer = ENEMY_HEALTHBAR_SHOW_TIME;
     enemyHealthLagDelayTimer = ENEMY_HEALTHBAR_LAG_DELAY;
     enemyHealthLagShrinkTimer = ENEMY_HEALTHBAR_LAG_SHRINK;
     if (enemyHealth <= 0) {
+        playSound("enemyDeath");
         enemyAlive = false;
         enemyDeathTimer = 0;
         enemyCollisionBox.visible = false;
@@ -554,6 +592,7 @@ function updateEnemyHealthBar() {
 
 function triggerExtraEnemyDamage(enemy, damage) {
     if (!enemy.alive) return;
+    playSound("ballHitRobot");
     enemy.health = Math.max(0, enemy.health - damage);
     enemy.displayedHealth = enemy.health;
     enemy.damageTimer = ENEMY_DAMAGE_DURATION;
@@ -561,6 +600,7 @@ function triggerExtraEnemyDamage(enemy, damage) {
     enemy.healthLagDelayTimer = ENEMY_HEALTHBAR_LAG_DELAY;
     enemy.healthLagShrinkTimer = ENEMY_HEALTHBAR_LAG_SHRINK;
     if (enemy.health <= 0) {
+        playSound("enemyDeath");
         enemy.alive = false;
         enemy.deathTimer = 0;
         enemy.healthBarTimer = ENEMY_DEATH_FALL_TIME + ENEMY_DEATH_FADE_TIME;
@@ -2111,6 +2151,7 @@ document.addEventListener(
         if (gameState !== GAME_STATE_PLAYING) return;
         if (Math.abs(e.deltaY) < 0.01) return;
         currentWeapon = currentWeapon === WEAPON_BALL ? WEAPON_PORTAL : WEAPON_BALL;
+        if (currentWeapon === WEAPON_PORTAL) playSound("portalGunPowerUp");
         drawWeaponIndicator();
     },
     { passive: true }
@@ -2844,6 +2885,7 @@ function getWallSideKey(axis, normal, pos, coordHint) {
 
 function shootBall() {
     if (ballReserve <= 0) return false;
+    playSound("ballThrow");
     ballReserve -= 1;
     if (ballReserve < BALL_RESERVE_MAX) ballReserveRegenTimer = 0;
     const hue = (ballShotCount * 47) % 360;
@@ -2890,6 +2932,7 @@ function shootBall() {
 }
 
 function shootPortalProjectile(colorHex) {
+    playSound(colorHex === 0x66ccff ? "shootBluePortal" : "shootRedPortal");
     const material = new THREE.MeshStandardMaterial({
         color: colorHex,
         emissive: colorHex,
@@ -3135,7 +3178,7 @@ function getProjectileWallHit(prevPos, nextPos) {
             normal: normal.clone(),
             wall: {
                 axis: "x",
-                    coord: normal.x > 0 ? MIDDLE_WALL_HALF_THICKNESS : -MIDDLE_WALL_HALF_THICKNESS,
+                coord: normal.x > 0 ? MIDDLE_WALL_HALF_THICKNESS : -MIDDLE_WALL_HALF_THICKNESS,
                 hMin,
                 hMax,
                 yMin,
@@ -3284,6 +3327,11 @@ function applyPortalPlacement(portalRef, placement) {
 }
 
 function spawnPortalPlacementEffect(portalRef, placement) {
+    if (placement.blocked) {
+        playSound("invalidSurface");
+    } else {
+        playSound(portalRef === portalA ? "openPortalBlue" : "openPortalRed");
+    }
     const effectMaterial = new THREE.MeshBasicMaterial({
         color: portalRef === portalA ? 0x66ccff : 0xff66aa,
         transparent: true,
@@ -3549,11 +3597,11 @@ function updateBallPhysics(dt) {
             // Floor / ceiling collisions
             if (pos.y < BALL_RADIUS) {
                 pos.y = BALL_RADIUS;
-                if (vel.y < 0) vel.y = -vel.y * BALL_BOUNCE;
+                if (vel.y < 0) { if (Math.abs(vel.y) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.y) / 10)); vel.y = -vel.y * BALL_BOUNCE; }
                 applySurfaceFriction(vel, new THREE.Vector3(0, 1, 0), BALL_FRICTION);
             } else if (pos.y > ROOM_HEIGHT - BALL_RADIUS) {
                 pos.y = ROOM_HEIGHT - BALL_RADIUS;
-                if (vel.y > 0) vel.y = -vel.y * BALL_BOUNCE;
+                if (vel.y > 0) { if (Math.abs(vel.y) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.y) / 10)); vel.y = -vel.y * BALL_BOUNCE; }
                 applySurfaceFriction(vel, new THREE.Vector3(0, -1, 0), BALL_FRICTION);
             }
 
@@ -3567,13 +3615,13 @@ function updateBallPhysics(dt) {
                 );
                 if (!throughPortal) {
                     pos.x = -WORLD_HALF_X + BALL_RADIUS;
-                    if (vel.x < 0) vel.x = -vel.x * BALL_BOUNCE;
+                    if (vel.x < 0) { if (Math.abs(vel.x) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.x) / 10)); vel.x = -vel.x * BALL_BOUNCE; }
                     applySurfaceFriction(vel, new THREE.Vector3(1, 0, 0), BALL_FRICTION);
                 }
             } else if (pos.x > WORLD_HALF_X - BALL_RADIUS) {
                 if (!isPointInsidePortalWallHole(pos, BALL_RADIUS, "x", WORLD_HALF_X)) {
                     pos.x = WORLD_HALF_X - BALL_RADIUS;
-                    if (vel.x > 0) vel.x = -vel.x * BALL_BOUNCE;
+                    if (vel.x > 0) { if (Math.abs(vel.x) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.x) / 10)); vel.x = -vel.x * BALL_BOUNCE; }
                     applySurfaceFriction(vel, new THREE.Vector3(-1, 0, 0), BALL_FRICTION);
                 }
             }
@@ -3581,13 +3629,13 @@ function updateBallPhysics(dt) {
             if (pos.z < -WORLD_HALF_Z + BALL_RADIUS) {
                 if (!isPointInsidePortalWallHole(pos, BALL_RADIUS, "z", -WORLD_HALF_Z)) {
                     pos.z = -WORLD_HALF_Z + BALL_RADIUS;
-                    if (vel.z < 0) vel.z = -vel.z * BALL_BOUNCE;
+                    if (vel.z < 0) { if (Math.abs(vel.z) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.z) / 10)); vel.z = -vel.z * BALL_BOUNCE; }
                     applySurfaceFriction(vel, new THREE.Vector3(0, 0, 1), BALL_FRICTION);
                 }
             } else if (pos.z > WORLD_HALF_Z - BALL_RADIUS) {
                 if (!isPointInsidePortalWallHole(pos, BALL_RADIUS, "z", WORLD_HALF_Z)) {
                     pos.z = WORLD_HALF_Z - BALL_RADIUS;
-                    if (vel.z > 0) vel.z = -vel.z * BALL_BOUNCE;
+                    if (vel.z > 0) { if (Math.abs(vel.z) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.z) / 10)); vel.z = -vel.z * BALL_BOUNCE; }
                     applySurfaceFriction(vel, new THREE.Vector3(0, 0, -1), BALL_FRICTION);
                 }
             }
@@ -3605,8 +3653,8 @@ function updateBallPhysics(dt) {
                 if (!isPointInsidePortalWallHole(pos, BALL_RADIUS, "x", middleCoord)) {
                     const pushRight = pos.x >= 0;
                     pos.x = (pushRight ? 1 : -1) * (MIDDLE_WALL_HALF_THICKNESS + BALL_RADIUS);
-                    if (pushRight && vel.x < 0) vel.x = -vel.x * BALL_BOUNCE;
-                    if (!pushRight && vel.x > 0) vel.x = -vel.x * BALL_BOUNCE;
+                    if (pushRight && vel.x < 0) { if (Math.abs(vel.x) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.x) / 10)); vel.x = -vel.x * BALL_BOUNCE; }
+                    if (!pushRight && vel.x > 0) { if (Math.abs(vel.x) > BALL_BOUNCE_SOUND_MIN_SPEED) playSound("ballBounce", Math.min(1, Math.abs(vel.x) / 10)); vel.x = -vel.x * BALL_BOUNCE; }
                     applySurfaceFriction(
                         vel,
                         new THREE.Vector3(pushRight ? 1 : -1, 0, 0),
@@ -3884,6 +3932,14 @@ function tryPortalCrossing(prevCenter, curCenter, dt) {
             }
 
             teleportCooldown = 0.2;
+            // Play enter/exit portal sounds based on which portal the player enters
+            if (portal === portalA) {
+                playSound("enterBluePortal");
+                playSound("exitRedPortal");
+            } else {
+                playSound("enterRedPortal");
+                playSound("exitBluePortal");
+            }
             break;
         }
     }
