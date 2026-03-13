@@ -92,18 +92,36 @@ function buildTwoAdjacentRooms(scene) {
     floorTexture.wrapT = THREE.RepeatWrapping;
     floorTexture.repeat.set(6, 3);
     floorTexture.colorSpace = THREE.SRGBColorSpace;
+    const floorTextureLeft = floorTexture.clone();
+    floorTextureLeft.repeat.set(3, 3);
+    floorTextureLeft.needsUpdate = true;
+    const floorTextureRight = floorTexture.clone();
+    floorTextureRight.repeat.set(3, 3);
+    floorTextureRight.needsUpdate = true;
 
-    const floor = new THREE.Mesh(
-        new THREE.PlaneGeometry(totalWidth, roomDepth),
+    const leftFloor = new THREE.Mesh(
+        new THREE.PlaneGeometry(totalWidth / 2, roomDepth),
         new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            map: floorTexture,
+            color: 0xb4bab4,
+            map: floorTextureLeft,
             roughness: 0.9,
         })
     );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0.001;
-    scene.add(floor);
+    leftFloor.rotation.x = -Math.PI / 2;
+    leftFloor.position.set(-totalWidth / 4, 0.001, 0);
+    scene.add(leftFloor);
+
+    const rightFloor = new THREE.Mesh(
+        new THREE.PlaneGeometry(totalWidth / 2, roomDepth),
+        new THREE.MeshStandardMaterial({
+            color: 0xbab4b4,
+            map: floorTextureRight,
+            roughness: 0.9,
+        })
+    );
+    rightFloor.rotation.x = -Math.PI / 2;
+    rightFloor.position.set(totalWidth / 4, 0.001, 0);
+    scene.add(rightFloor);
 
     const ceilingTexture = new THREE.TextureLoader().load("/Cieling_texture.png");
     ceilingTexture.wrapS = THREE.RepeatWrapping;
@@ -128,36 +146,61 @@ function buildTwoAdjacentRooms(scene) {
     wallTexture.wrapT = THREE.RepeatWrapping;
     wallTexture.repeat.set(8, 3);
     wallTexture.colorSpace = THREE.SRGBColorSpace;
-    const wallMat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
+    const leftRoomWallMat = new THREE.MeshStandardMaterial({
+        color: 0xc7dec7,
         map: wallTexture,
         roughness: 0.95,
     });
+    const rightRoomWallMat = new THREE.MeshStandardMaterial({
+        color: 0xdec7c7,
+        map: wallTexture,
+        roughness: 0.95,
+    });
+    const dividerWallMatSet = [
+        rightRoomWallMat, // +X face (right room side)
+        leftRoomWallMat,  // -X face (left room side)
+        rightRoomWallMat, // +Y face
+        rightRoomWallMat, // -Y face
+        rightRoomWallMat, // +Z face
+        rightRoomWallMat, // -Z face
+    ];
 
     const backWall = new THREE.Mesh(
-        new THREE.BoxGeometry(totalWidth, roomHeight, wallThickness),
-        wallMat
+        new THREE.BoxGeometry(totalWidth / 2, roomHeight, wallThickness),
+        leftRoomWallMat
     );
-    backWall.position.set(0, roomHeight / 2, -halfDepth);
+    backWall.position.set(-totalWidth / 4, roomHeight / 2, -halfDepth);
     scene.add(backWall);
+    const backWallRight = new THREE.Mesh(
+        new THREE.BoxGeometry(totalWidth / 2, roomHeight, wallThickness),
+        rightRoomWallMat
+    );
+    backWallRight.position.set(totalWidth / 4, roomHeight / 2, -halfDepth);
+    scene.add(backWallRight);
 
     const frontWall = new THREE.Mesh(
-        new THREE.BoxGeometry(totalWidth, roomHeight, wallThickness),
-        wallMat
+        new THREE.BoxGeometry(totalWidth / 2, roomHeight, wallThickness),
+        leftRoomWallMat
     );
-    frontWall.position.set(0, roomHeight / 2, halfDepth);
+    frontWall.position.set(-totalWidth / 4, roomHeight / 2, halfDepth);
     scene.add(frontWall);
+    const frontWallRight = new THREE.Mesh(
+        new THREE.BoxGeometry(totalWidth / 2, roomHeight, wallThickness),
+        rightRoomWallMat
+    );
+    frontWallRight.position.set(totalWidth / 4, roomHeight / 2, halfDepth);
+    scene.add(frontWallRight);
 
     const leftWall = new THREE.Mesh(
         new THREE.BoxGeometry(wallThickness, roomHeight, roomDepth),
-        wallMat
+        leftRoomWallMat
     );
     leftWall.position.set(-halfWidth, roomHeight / 2, 0);
     scene.add(leftWall);
 
     const rightWall = new THREE.Mesh(
         new THREE.BoxGeometry(wallThickness, roomHeight, roomDepth),
-        wallMat
+        rightRoomWallMat
     );
     rightWall.position.set(halfWidth, roomHeight / 2, 0);
     scene.add(rightWall);
@@ -166,14 +209,14 @@ function buildTwoAdjacentRooms(scene) {
     const segmentDepth = (roomDepth - doorWidth) / 2;
     const sideA = new THREE.Mesh(
         new THREE.BoxGeometry(wallThickness, roomHeight, segmentDepth),
-        wallMat
+        dividerWallMatSet
     );
     sideA.position.set(0, roomHeight / 2, -(doorWidth / 2 + segmentDepth / 2));
     scene.add(sideA);
 
     const sideB = new THREE.Mesh(
         new THREE.BoxGeometry(wallThickness, roomHeight, segmentDepth),
-        wallMat
+        dividerWallMatSet
     );
     sideB.position.set(0, roomHeight / 2, doorWidth / 2 + segmentDepth / 2);
     scene.add(sideB);
@@ -181,10 +224,51 @@ function buildTwoAdjacentRooms(scene) {
     const topHeight = roomHeight - doorHeight;
     const topSegment = new THREE.Mesh(
         new THREE.BoxGeometry(wallThickness, topHeight, doorWidth),
-        wallMat
+        dividerWallMatSet
     );
     topSegment.position.set(0, doorHeight + topHeight / 2, 0);
     scene.add(topSegment);
+
+    // Simple visual-only doorway frame (no gameplay collision checks use this geometry).
+    const doorFrameThickness = 0.14;
+    const doorFrameDepth = 0.06;
+    const doorFrameMat = new THREE.MeshStandardMaterial({
+        color: 0x9a9a9a,
+        roughness: 0.9,
+        metalness: 0.05,
+    });
+    const frameOffsetX = wallThickness * 0.5 + doorFrameDepth * 0.5 + 0.004;
+    const doorSideCenterZ = doorWidth * 0.5 + doorFrameThickness * 0.5;
+    const addDoorFrameAtX = (x) => {
+        const doorFrameLeft = new THREE.Mesh(
+            new THREE.BoxGeometry(doorFrameDepth, doorHeight, doorFrameThickness),
+            doorFrameMat
+        );
+        doorFrameLeft.position.set(x, doorHeight * 0.5, -doorSideCenterZ);
+        doorFrameLeft.castShadow = false;
+        doorFrameLeft.receiveShadow = false;
+        scene.add(doorFrameLeft);
+
+        const doorFrameRight = new THREE.Mesh(
+            new THREE.BoxGeometry(doorFrameDepth, doorHeight, doorFrameThickness),
+            doorFrameMat
+        );
+        doorFrameRight.position.set(x, doorHeight * 0.5, doorSideCenterZ);
+        doorFrameRight.castShadow = false;
+        doorFrameRight.receiveShadow = false;
+        scene.add(doorFrameRight);
+
+        const doorFrameTop = new THREE.Mesh(
+            new THREE.BoxGeometry(doorFrameDepth, doorFrameThickness, doorWidth + 2 * doorFrameThickness),
+            doorFrameMat
+        );
+        doorFrameTop.position.set(x, doorHeight + doorFrameThickness * 0.5, 0);
+        doorFrameTop.castShadow = false;
+        doorFrameTop.receiveShadow = false;
+        scene.add(doorFrameTop);
+    };
+    addDoorFrameAtX(frameOffsetX);
+    addDoorFrameAtX(-frameOffsetX);
 }
 
 addLighting(world.scene);
@@ -1318,6 +1402,7 @@ camera.position.set(0, 0, 0);
 
 const moveState = { forward: false, backward: false, left: false, right: false };
 const slowArrowState = { up: false, down: false, left: false, right: false };
+let sprintHeld = false;
 let verticalVelocity = 0;
 let onGround = true;
 let teleportCooldown = 0;
@@ -1428,14 +1513,18 @@ let fpsDisplay = 0;
 
 const killHud = document.createElement("div");
 killHud.style.position = "fixed";
-killHud.style.top = "12px";
-killHud.style.left = "96px";
+killHud.style.top = "16px";
+killHud.style.left = "244px";
 killHud.style.padding = "6px 9px";
 killHud.style.background = "rgba(0,0,0,0.45)";
 killHud.style.color = "#fff";
 killHud.style.fontFamily = "monospace";
 killHud.style.fontSize = "13px";
-killHud.style.borderRadius = "8px";
+killHud.style.height = "40px";
+killHud.style.boxSizing = "border-box";
+killHud.style.display = "flex";
+killHud.style.alignItems = "center";
+killHud.style.borderRadius = "7px";
 killHud.style.userSelect = "none";
 killHud.style.pointerEvents = "none";
 killHud.style.zIndex = "12";
@@ -1534,6 +1623,7 @@ function resetGameWorldForNewGame(mode = currentGameMode) {
     slowArrowState.down = false;
     slowArrowState.left = false;
     slowArrowState.right = false;
+    sprintHeld = false;
     resetMainEnemyForNewGame();
     if (currentGameMode === GAME_MODE_EXPLORE) {
         orbEntity.visible = false;
@@ -1555,6 +1645,7 @@ function showStartMenu() {
     gameState = GAME_STATE_START_MENU;
     menuTitle.textContent = "Portal Arena";
     menuSubtitle.textContent = "Choose mode:";
+    menuControlsCard.style.display = "grid";
     menuOverlay.style.display = "flex";
     menuBattleButton.textContent = "Battle";
     menuExploreButton.textContent = "Explore";
@@ -1578,6 +1669,7 @@ function showGameOverMenu() {
     if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
     menuTitle.textContent = "You Died";
     menuSubtitle.textContent = `Kills: ${enemyKillCount} | Restart mode:`;
+    menuControlsCard.style.display = "none";
     menuOverlay.style.display = "flex";
     menuBattleButton.textContent = "Restart Battle";
     menuExploreButton.textContent = "Restart Explore";
@@ -1613,8 +1705,10 @@ function showPauseMenu() {
     slowArrowState.down = false;
     slowArrowState.left = false;
     slowArrowState.right = false;
+    sprintHeld = false;
     menuTitle.textContent = "Paused";
     menuSubtitle.textContent = `Kills: ${enemyKillCount}`;
+    menuControlsCard.style.display = "none";
     menuOverlay.style.display = "flex";
     menuBattleButton.textContent = "Resume";
     menuExploreButton.textContent = "Restart";
@@ -1665,7 +1759,8 @@ portalResHud.style.pointerEvents = "none";
 portalResHud.style.whiteSpace = "pre";
 portalResHud.style.zIndex = "12";
 portalResHud.textContent = "L1: -\nL2: -\nL3: -";
-document.body.appendChild(portalResHud);
+// Debugging UI disabled: keep data generation, hide right-corner camera info panel.
+// document.body.appendChild(portalResHud);
 const portalPreviewScene = new THREE.Scene();
 const portalPreviewCamera = new THREE.OrthographicCamera(0, window.innerWidth, window.innerHeight, 0, -1, 1);
 portalPreviewCamera.position.z = 1;
@@ -1753,7 +1848,7 @@ playerHealthCanvas.width = 220;
 playerHealthCanvas.height = 48;
 playerHealthCanvas.style.position = "fixed";
 playerHealthCanvas.style.left = "12px";
-playerHealthCanvas.style.top = "48px";
+playerHealthCanvas.style.top = "12px";
 playerHealthCanvas.style.pointerEvents = "none";
 playerHealthCanvas.style.zIndex = "12";
 document.body.appendChild(playerHealthCanvas);
@@ -1794,6 +1889,80 @@ menuSubtitle.style.opacity = "0.9";
 const menuChoiceRow = document.createElement("div");
 menuChoiceRow.style.display = "flex";
 menuChoiceRow.style.gap = "12px";
+const menuControlsCard = document.createElement("div");
+menuControlsCard.style.display = "grid";
+menuControlsCard.style.gridTemplateColumns = "auto auto";
+menuControlsCard.style.columnGap = "12px";
+menuControlsCard.style.rowGap = "8px";
+menuControlsCard.style.padding = "10px 12px";
+menuControlsCard.style.borderRadius = "10px";
+menuControlsCard.style.background = "rgba(0,0,0,0.45)";
+menuControlsCard.style.border = "1px solid rgba(255,255,255,0.16)";
+const menuControlsTitle = document.createElement("div");
+menuControlsTitle.textContent = "Controls";
+menuControlsTitle.style.gridColumn = "1 / span 2";
+menuControlsTitle.style.fontSize = "16px";
+menuControlsTitle.style.fontWeight = "700";
+const makeKeyCap = (label, minW = 24) => {
+    const key = document.createElement("span");
+    key.textContent = label;
+    key.style.display = "inline-flex";
+    key.style.alignItems = "center";
+    key.style.justifyContent = "center";
+    key.style.minWidth = `${minW}px`;
+    key.style.height = "24px";
+    key.style.padding = "0 7px";
+    key.style.borderRadius = "6px";
+    key.style.border = "1px solid rgba(255,255,255,0.45)";
+    key.style.background = "rgba(255,255,255,0.08)";
+    key.style.fontSize = "13px";
+    key.style.fontWeight = "700";
+    key.style.boxSizing = "border-box";
+    return key;
+};
+const addControlRow = (left, right) => {
+    const leftCell = document.createElement("div");
+    leftCell.textContent = left;
+    leftCell.style.alignSelf = "center";
+    leftCell.style.fontSize = "13px";
+    leftCell.style.opacity = "0.9";
+    const rightCell = document.createElement("div");
+    rightCell.style.display = "flex";
+    rightCell.style.gap = "6px";
+    rightCell.style.alignItems = "center";
+    rightCell.append(...right);
+    menuControlsCard.append(leftCell, rightCell);
+};
+const keyW = makeKeyCap("W");
+const keyA = makeKeyCap("A");
+const keyS = makeKeyCap("S");
+const keyD = makeKeyCap("D");
+const keySpace = makeKeyCap("SPACE", 64);
+const keyShift = makeKeyCap("SHIFT", 52);
+const keyQ = makeKeyCap("Q");
+const makeMouseControlIcon = (src, alt) => {
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = alt;
+    img.width = 104;
+    img.height = 52;
+    img.style.display = "block";
+    img.style.borderRadius = "6px";
+    return img;
+};
+const mouseBluePortalImg = makeMouseControlIcon("/mouse-left-blue.svg", "left mouse for blue portal");
+const mousePinkPortalImg = makeMouseControlIcon("/mouse-right-pink.svg", "right mouse for pink portal");
+const mouseShootBallImg = makeMouseControlIcon("/mouse-left-ball.svg", "left mouse to shoot balls");
+const mouseSwitchWeaponImg = makeMouseControlIcon("/mouse-scroll-switch.svg", "scroll to switch weapon");
+addControlRow("Move", [keyW, keyA, keyS, keyD]);
+addControlRow("Jump", [keySpace]);
+addControlRow("Sprint", [keyShift]);
+addControlRow("Pause", [keyQ]);
+addControlRow("Blue portal", [mouseBluePortalImg]);
+addControlRow("Pink portal", [mousePinkPortalImg]);
+addControlRow("Shoot balls", [mouseShootBallImg]);
+addControlRow("Switch gun/balls", [mouseSwitchWeaponImg]);
+menuControlsCard.prepend(menuControlsTitle);
 const menuBattleButton = document.createElement("button");
 const menuExploreButton = document.createElement("button");
 const menuExitButton = document.createElement("button");
@@ -1804,9 +1973,18 @@ for (const btn of [menuBattleButton, menuExploreButton, menuExitButton]) {
     btn.style.border = "none";
     btn.style.cursor = "pointer";
     btn.style.fontFamily = "monospace";
+    btn.style.background = "rgba(255,255,255,0.16)";
+    btn.style.color = "#fff";
+    btn.style.transition = "background 120ms ease";
+    btn.addEventListener("mouseenter", () => {
+        btn.style.background = "rgba(255,255,255,0.28)";
+    });
+    btn.addEventListener("mouseleave", () => {
+        btn.style.background = "rgba(255,255,255,0.16)";
+    });
 }
 menuChoiceRow.append(menuBattleButton, menuExploreButton, menuExitButton);
-menuOverlay.append(menuTitle, menuSubtitle, menuChoiceRow);
+menuOverlay.append(menuTitle, menuControlsCard, menuSubtitle, menuChoiceRow);
 document.body.appendChild(menuOverlay);
 
 function drawPlayerHealthHud() {
@@ -1819,7 +1997,7 @@ function drawPlayerHealthHud() {
     const y = 16;
     const barW = 198;
     const barH = 14;
-    const radius = 6;
+    const radius = 7;
     const hp01 = THREE.MathUtils.clamp(playerHealth / PLAYER_MAX_HEALTH, 0, 1);
 
     const roundedRect = (px, py, pw, ph, r) => {
@@ -1838,7 +2016,7 @@ function drawPlayerHealthHud() {
     };
 
     ctx.fillStyle = "rgba(0,0,0,0.45)";
-    roundedRect(x - 6, y - 8, barW + 12, barH + 16, radius + 1);
+    roundedRect(x - 6, y - 8, barW + 12, barH + 16, radius);
     ctx.fill();
     ctx.fillStyle = "rgba(34,34,34,0.95)";
     roundedRect(x, y, barW, barH, radius);
@@ -2187,6 +2365,7 @@ document.addEventListener("keydown", (e) => {
     if (e.code === "KeyS") moveState.backward = true;
     if (e.code === "KeyA") moveState.left = true;
     if (e.code === "KeyD") moveState.right = true;
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") sprintHeld = true;
     if (e.code === "ArrowUp") slowArrowState.up = true;
     if (e.code === "ArrowDown") slowArrowState.down = true;
     if (e.code === "ArrowLeft") slowArrowState.left = true;
@@ -2202,6 +2381,7 @@ document.addEventListener("keyup", (e) => {
     if (e.code === "KeyS") moveState.backward = false;
     if (e.code === "KeyA") moveState.left = false;
     if (e.code === "KeyD") moveState.right = false;
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") sprintHeld = false;
     if (e.code === "ArrowUp") slowArrowState.up = false;
     if (e.code === "ArrowDown") slowArrowState.down = false;
     if (e.code === "ArrowLeft") slowArrowState.left = false;
@@ -4118,7 +4298,8 @@ function animate() {
         const moveDir = new THREE.Vector3(inputX, 0, inputZ);
         if (moveDir.lengthSq() > 1) moveDir.normalize();
         moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw.rotation.y);
-        playerYaw.position.addScaledVector(moveDir, MOVE_SPEED * dt);
+        const moveSpeed = sprintHeld ? MOVE_SPEED * 2 : MOVE_SPEED;
+        playerYaw.position.addScaledVector(moveDir, moveSpeed * dt);
     }
 
     // Carry preserved velocity from teleports (e.g. falling into floor portal exits horizontally).
@@ -4518,10 +4699,12 @@ function animate() {
     camera.updateMatrixWorld(true);
     updatePortalTextures();
     if (frameCounter % 10 === 0) {
-        portalResHud.textContent = portalResolutionDebugText;
+        // Debugging UI disabled: do not update visible camera info panel text.
+        // portalResHud.textContent = portalResolutionDebugText;
     }
     renderer.render(currentWorld.scene, camera);
-    renderPortalPreviewOverlay();
+    // Debugging UI disabled: do not draw 6 camera preview renderings on screen.
+    // renderPortalPreviewOverlay();
     minimapUpdateTimer += dt;
     if (minimapUpdateTimer >= MINIMAP_UPDATE_INTERVAL) {
         drawMinimap();
@@ -4545,7 +4728,8 @@ window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    portalResHud.style.top = `${12 + minimapCanvas.height + 8}px`;
+    // Debugging UI disabled: panel is not displayed, so no layout update needed.
+    // portalResHud.style.top = `${12 + minimapCanvas.height + 8}px`;
     portalPreviewCamera.right = window.innerWidth;
     portalPreviewCamera.bottom = window.innerHeight;
     portalPreviewCamera.updateProjectionMatrix();

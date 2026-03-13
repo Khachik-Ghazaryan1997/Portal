@@ -1,0 +1,18 @@
+<svg width="180" height="86" viewBox="0 0 180 86" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <rect x="1" y="1" width="178" height="84" rx="10" fill="rgba(18,18,18,0.72)" stroke="rgba(255,255,255,0.22)"/>
+  <g transform="translate(56,10)" stroke="rgba(255,255,255,0.9)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M34 58c11.6 0 21-9.4 21-21V23C55 11.4 45.6 2 34 2S13 11.4 13 23v14c0 11.6 9.4 21 21 21z"/>
+    <path d="M34 2v20"/>
+    <path d="M34 18v10"/>
+    <path d="M24 10v14"/>
+    <path d="M44 10v14"/>
+    <path d="M60 22h12"/>
+    <path d="M66 16l6 6-6 6"/>
+    <path d="M8 22H-4"/>
+    <path d="M2 16l-6 6 6 6"/>
+    <path d="M34 33v9"/>
+    <path d="M29 39l5 5 5-5"/>
+    <path d="M34 31v-8"/>
+    <path d="M29 25l5-5 5 5"/>
+  </g>
+</svg>
