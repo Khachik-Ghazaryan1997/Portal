@@ -10,7 +10,7 @@ renderer.autoClear = true;
 renderer.setClearColor(0x000000, 1);
 document.body.appendChild(renderer.domElement);
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.001, 1000);
 
 // Audio system
 const audioListener = new THREE.AudioListener();
@@ -1275,6 +1275,9 @@ function createPortalFrame(color = 0x66ccff) {
         emissiveIntensity: 0.2,
         roughness: 0.25,
         metalness: 0.3,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -4,
     });
     const addBar = (w, h, x, y) => {
         const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.12), mat);
@@ -1315,24 +1318,36 @@ function createPortal(ownerWorld, x, y, z, ry, color) {
 
     const frontSurface = new THREE.Mesh(
         new THREE.PlaneGeometry(PORTAL_WIDTH, PORTAL_HEIGHT),
-        new THREE.MeshBasicMaterial({ map: rt.texture, side: THREE.FrontSide })
+        new THREE.MeshBasicMaterial({
+            map: rt.texture,
+            side: THREE.FrontSide,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -4,
+        })
     );
     frontSurface.position.copy(mesh.position);
     frontSurface.quaternion.copy(mesh.quaternion);
     frontSurface.position.add(
-        new THREE.Vector3(0, 0, 1).applyQuaternion(mesh.quaternion).multiplyScalar(0.004)
+        new THREE.Vector3(0, 0, 1).applyQuaternion(mesh.quaternion).multiplyScalar(0.01)
     );
     frontSurface.frustumCulled = false;
     ownerWorld.scene.add(frontSurface);
 
     const backSurface = new THREE.Mesh(
         new THREE.PlaneGeometry(PORTAL_WIDTH, PORTAL_HEIGHT),
-        new THREE.MeshBasicMaterial({ map: rt.texture, side: THREE.BackSide })
+        new THREE.MeshBasicMaterial({
+            map: rt.texture,
+            side: THREE.BackSide,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -4,
+        })
     );
     backSurface.position.copy(mesh.position);
     backSurface.quaternion.copy(mesh.quaternion);
     backSurface.position.add(
-        new THREE.Vector3(0, 0, -1).applyQuaternion(mesh.quaternion).multiplyScalar(0.004)
+        new THREE.Vector3(0, 0, -1).applyQuaternion(mesh.quaternion).multiplyScalar(0.01)
     );
     backSurface.frustumCulled = false;
     ownerWorld.scene.add(backSurface);
@@ -1375,9 +1390,9 @@ function syncPortalVisuals(portal) {
     portal.frame.quaternion.copy(portal.mesh.quaternion);
 
     const portalForward = new THREE.Vector3(0, 0, 1).applyQuaternion(portal.mesh.quaternion);
-    portal.frontSurface.position.copy(portal.mesh.position).addScaledVector(portalForward, 0.004);
+    portal.frontSurface.position.copy(portal.mesh.position).addScaledVector(portalForward, 0.01);
     portal.frontSurface.quaternion.copy(portal.mesh.quaternion);
-    portal.backSurface.position.copy(portal.mesh.position).addScaledVector(portalForward, -0.004);
+    portal.backSurface.position.copy(portal.mesh.position).addScaledVector(portalForward, -0.01);
     portal.backSurface.quaternion.copy(portal.mesh.quaternion);
 }
 
@@ -2777,88 +2792,21 @@ function updatePortalRenderTargetResolution(portal, distanceToPlayer, l1MaxSize)
     }
 }
 
-function isPointInRectNdc(p) {
-    return p.x >= -1 && p.x <= 1 && p.y >= -1 && p.y <= 1;
-}
-
-function isPointInPolygon2D(point, poly) {
-    let inside = false;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
-        const xi = poly[i].x;
-        const yi = poly[i].y;
-        const xj = poly[j].x;
-        const yj = poly[j].y;
-        const intersect = ((yi > point.y) !== (yj > point.y)) &&
-            (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 1e-8) + xi);
-        if (intersect) inside = !inside;
-    }
-    return inside;
-}
-
-function orientation2D(a, b, c) {
-    return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
-}
-
-function onSegment2D(a, b, c) {
-    return (
-        b.x <= Math.max(a.x, c.x) &&
-        b.x >= Math.min(a.x, c.x) &&
-        b.y <= Math.max(a.y, c.y) &&
-        b.y >= Math.min(a.y, c.y)
-    );
-}
-
-function segmentsIntersect2D(p1, q1, p2, q2) {
-    const o1 = orientation2D(p1, q1, p2);
-    const o2 = orientation2D(p1, q1, q2);
-    const o3 = orientation2D(p2, q2, p1);
-    const o4 = orientation2D(p2, q2, q1);
-    if ((o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0)) return true;
-    const eps = 1e-8;
-    if (Math.abs(o1) < eps && onSegment2D(p1, p2, q1)) return true;
-    if (Math.abs(o2) < eps && onSegment2D(p1, q2, q1)) return true;
-    if (Math.abs(o3) < eps && onSegment2D(p2, p1, q2)) return true;
-    if (Math.abs(o4) < eps && onSegment2D(p2, q1, q2)) return true;
-    return false;
-}
-
-function polygonIntersectsScreenRectNdc(poly) {
-    const rect = [
-        { x: -1, y: -1 },
-        { x: 1, y: -1 },
-        { x: 1, y: 1 },
-        { x: -1, y: 1 },
-    ];
-    for (let i = 0; i < poly.length; i += 1) {
-        if (isPointInRectNdc(poly[i])) return true;
-    }
-    for (let i = 0; i < rect.length; i += 1) {
-        if (isPointInPolygon2D(rect[i], poly)) return true;
-    }
-    for (let i = 0; i < poly.length; i += 1) {
-        const a1 = poly[i];
-        const a2 = poly[(i + 1) % poly.length];
-        for (let j = 0; j < rect.length; j += 1) {
-            const b1 = rect[j];
-            const b2 = rect[(j + 1) % rect.length];
-            if (segmentsIntersect2D(a1, a2, b1, b2)) return true;
-        }
-    }
-    return false;
-}
+const _portalFrustum = new THREE.Frustum();
+const _portalProjScreenMatrix = new THREE.Matrix4();
+const _portalBox = new THREE.Box3();
 
 function isPortalInCameraFov(portal, cam) {
-    const projectedPoly = [];
-    let hasCornerInFront = false;
-    for (let i = 0; i < portalCorners.length; i += 1) {
-        portalCornerWorld.copy(portalCorners[i]).applyMatrix4(portal.mesh.matrixWorld);
-        portalCornerCamera.copy(portalCornerWorld).applyMatrix4(cam.matrixWorldInverse);
-        if (portalCornerCamera.z < 0) hasCornerInFront = true;
-        tmpHitPoint.copy(portalCornerWorld).project(cam);
-        projectedPoly.push({ x: tmpHitPoint.x, y: tmpHitPoint.y });
+    _portalProjScreenMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    _portalFrustum.setFromProjectionMatrix(_portalProjScreenMatrix);
+
+    _portalBox.makeEmpty();
+    for (const c of portalCorners) {
+        portalCornerWorld.copy(c).applyMatrix4(portal.mesh.matrixWorld);
+        _portalBox.expandByPoint(portalCornerWorld);
     }
-    if (!hasCornerInFront) return false;
-    return polygonIntersectsScreenRectNdc(projectedPoly);
+
+    return _portalFrustum.intersectsBox(_portalBox);
 }
 
 function computePortalResolutionSetFromCameraDistances(portal, maxRes) {
